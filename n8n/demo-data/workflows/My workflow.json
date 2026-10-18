@@ -1,0 +1,540 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerOn": "folder",
+        "path": "/data/shared/rag-files/pending/",
+        "events": [
+          "add"
+        ],
+        "options": {
+          "usePolling": true
+        }
+      },
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1e6be64b-001c-44a3-bf0a-04b0e1d386fe",
+      "name": "Local File Trigger"
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.path }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "id": "5e990f9e-9817-4568-a52e-d13b2f3c474a",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://docling:5001/v1/convert/file",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "files",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "image_export_mode",
+              "value": "referenced"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "id": "fc809e2f-c3d6-4c6d-bf42-4c8fc0f03e87",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'images' to the JSON of each one\nfor (const item of $input.all()) {\n  const md = item.json.document?.md_content ?? '';\n  const matches = md.matchAll(/!\\[[^\\]]*\\]\\(([^)\\s]+)\\)/g);\n  item.json.images = [...new Set([...matches].map(m => m[1].split('/').pop()))];\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        128
+      ],
+      "id": "ae7e3345-0129-4057-ad99-28ae6925cb41",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "images",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        864,
+        128
+      ],
+      "id": "e043df77-3382-44bc-85fd-e2f7500f1eef",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=mv /data/shared/docling-scratch/{{ $json.images }} /data/shared/extracted-images/"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        128
+      ],
+      "id": "4305a283-4117-4c47-b010-7d90739ee60a",
+      "name": "Execute Command"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "multimodal-rag",
+          "mode": "list",
+          "cachedResultName": "multimodal-rag"
+        },
+        "embeddingBatchSize": 700,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [
+        864,
+        -384
+      ],
+      "id": "7625b7de-fc9c-445a-9268-3192b19e739b",
+      "name": "Qdrant Vector Store",
+      "credentials": {
+        "qdrantApi": {
+          "id": "sFfERYppMeBnFNeA",
+          "name": "Local QdrantApi database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "nomic-embed-text:latest"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        864,
+        -208
+      ],
+      "id": "7b3ac90a-1f15-4d3c-8b85-f9f756feb88f",
+      "name": "Embeddings Ollama",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xHuYe0MDGOs9IpBW",
+          "name": "Local Ollama service"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "textSplittingMode": "custom",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        992,
+        -208
+      ],
+      "id": "d12f5f26-9649-4a2c-a02e-c4ae39c8fb8f",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "chunkSize": 700,
+        "options": {
+          "splitCode": "markdown"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        992,
+        -80
+      ],
+      "id": "e862d24f-b4b5-49e5-b093-719050a8b8e6",
+      "name": "Recursive Character Text Splitter"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question.\nIf you don't know the answer, just say that you don't know, don't try to make up an answer.\n\nYou MUST use the Qdrant vector store to retrieve information.\n\nYou must output the images in markdown format using the URL provided in the retrieved results."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        240,
+        400
+      ],
+      "id": "ac0bb4ca-f791-4af4-acd7-8aed3b616d82",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        112,
+        608
+      ],
+      "id": "47521b41-57d1-469d-897b-99a17fc2869a",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xHuYe0MDGOs9IpBW",
+          "name": "Local Ollama service"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Use this to fetch informtion from the knowledge base",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "multimodal-rag",
+          "mode": "list",
+          "cachedResultName": "multimodal-rag"
+        },
+        "topK": 5,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.3,
+      "position": [
+        512,
+        544
+      ],
+      "id": "01a2471f-bcb5-42d6-8900-2917e4c7adf7",
+      "name": "Qdrant Vector Store1",
+      "credentials": {
+        "qdrantApi": {
+          "id": "sFfERYppMeBnFNeA",
+          "name": "Local QdrantApi database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "nomic-embed-text:latest"
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOllama",
+      "typeVersion": 1,
+      "position": [
+        512,
+        720
+      ],
+      "id": "e43bac8d-388e-41a4-88dc-ca39a5d4ab37",
+      "name": "Embeddings Ollama1",
+      "credentials": {
+        "ollamaApi": {
+          "id": "xHuYe0MDGOs9IpBW",
+          "name": "Local Ollama service"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -16,
+        400
+      ],
+      "id": "370c61d6-5b62-45a7-bd12-2c1b2438a468",
+      "name": "When chat message received",
+      "webhookId": "bd07b48f-c4ec-4471-bd0c-576bccf6bdcb"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and rewrite image references in md_content to full URLs\nconst BASE_URL = 'http://localhost:8080';\n\nfor (const item of $input.all()) {\n  const doc = item.json.document;\n  if (!doc || typeof doc.md_content !== 'string') continue;\n\n  doc.md_content = doc.md_content.replace(\n    /!\\[([^\\]]*)\\]\\(([^)\\s]+)\\)/g,\n    (match, alt, src) => {\n      if (/^(https?:)?\\/\\//i.test(src) || src.startsWith('data:')) return match;\n      const fileName = src.split('/').pop();\n      return `![${alt}](${BASE_URL}/${encodeURIComponent(fileName)})`;\n    }\n  );\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -384
+      ],
+      "id": "9c61ee27-1c6b-4bdd-aaa1-16a1e340b140",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "http://qdrant:6333/collections/multimodal-rag",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        208,
+        -272
+      ],
+      "id": "2069a16e-566e-4cd8-8686-be0025e1fe8f",
+      "name": "DELETE Collection"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "http://qdrant:6333/collections/multimodal-rag",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -80,
+        -272
+      ],
+      "id": "48915ce1-bed7-489a-8a54-ed5e9b00601b",
+      "name": "CREATE Collection"
+    }
+  ],
+  "pinData": {
+    "Local File Trigger": [
+      {
+        "json": {
+          "event": "add",
+          "path": "/data/shared/rag-files/pending/BP81-00584A-04_Leaflet_The_FreeStyle_Battery_NA_SA_KOR_L05_250418.0.pdf"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "HTTP Request": [
+      {
+        "json": {
+          "document": {
+            "filename": "BP81-00584A-04_Leaflet_The_FreeStyle_Battery_NA_SA_KOR_L05_250418.0.pdf",
+            "md_content": "![Image](image_000000_6c3e16973b2a8b5cf46a9afc8fe767c36307ccdb00cb9b682b4ba3ad2d0b421d.png)\n\n## SAMSUNG SAMSUNG\n\n![Image](image_000001_d7a3303ba80b3f025866ae02e0cffd59f2bd31ef0f99ec097d0acc4fecbb7ddf.png)\n\n-04\n\n## [English]\n\nPackage contents: Battery, USB cable, User manual / Warranty card\n\n- 1 Cradle holder\n- 2 USB port (type C, 50 W OUT)\n- y Connects The Freestyle main body to the battery.\n- y Charges an external device at high speeds.\n- 3 USB port (type C, IN &amp; 10 W OUT) 日\n- y Charges The Freestyle battery. Charges an external device.\n- 4 Battery level check button\n- y Check the product battery level by viewing the LED indicator. If one LED indicator blinks, charge the battery.\n- 5 LED indicator\n\n![Image](image_000002_83daed73e590bbb2a8fe9479314ab3a1a06b43553f7e4501faacfa22dc6a6d5e.png)\n\n## Precautions for Using the Product\n\n- This is a dedicated battery for The Freestyle. Do not use it for other purposes. Use a genuine battery.\n\n- Be careful and ensure that children do not play with or dismantle the battery.\n\n- Do not heat the battery or put it in fire.\n\n- Be careful and ensure that any conductive foreign matter (e.g., liquid, dust, metal power or pencil lead) enters the input or output port. The port may rust or be temporarily shorted, which may cause explosion or fire.\n\n- If the product will be stored or used inside a vehicle in hot weather, be careful and ensure that the battery does not explode or leak, which may result in fire.\n\n- The appropriate operating temperature of this product is 0 ℃ to 35 ℃ (32 ℉ to 95 ℉) and the appropriate storage temperature is -20 ℃ to 50 ℃ (-4 ℉ to 122 ℉). Storing or using the battery at either higher or lower temperature than the appropriate temperature may cause battery damage or lifespan drop.\n\n- When moving the product, make sure to hold the battery and The Freestyle main body together. The battery may fall, which may cause injury, damage to the battery, explosion or fire. - If the product is turned off due to discharged battery, use the USB cable to charge the battery, and then press the button on the battery to turn on the product.\n\n## Charging the battery\n\n- y Charge the battery using the adapter (EP-TA865) that came with The Freestyle main body.\n- y If you charge the battery by connecting it to a computer or other device using the USB cable, the charging speed may decrease due to the low current.\n- y You can use the product even when charging is in progress, but it may take longer to charge the battery.\n- y The product and charger temperature may increase while charging is in progress. This is normal and does not affect the lifespan or functionality of the product. If the battery temperature increases above a threshold, charging may automatically be aborted to ensure safety.\n\n## Charging\n\nFully charge the battery before using the product, if the product is used for the first time after purchase or it has not been used for an extended period of time.\n\n1. Use the USB cable to connect the product to the adapter.\n2. After charging is complete, remove the USB cable from the product.\n3. y When charging is complete, all of the four LED indicators light up.\n\n10W OUT\n\n![Image](image_000003_19db9397355957b14ebd571957ab64724b832237685e0f68f97ad60e7da7a143.png)\n\n## Attaching the product to the battery\n\n1. Align The Freestyle main body with the grooves on the battery, and press the stand to combine the main body and battery.\n2. [ Do not press down the top of The Freestyle main body.\n\n2. Use the USB cable to connect The Freestyle main body to the battery.\n\n![Image](image_000004_1ebe4380ff9ff96189419707ac403dd36f6dddea4b2541940f930a7a00d3b30b.png)\n\n## Detaching the product from the battery\n\nFirst remove the connected USB cable.\n\nUse your fingers to slightly spread the rubber on the battery and lift up The Freestyle main body.\n\n![Image](image_000005_a1fe24a183b28dd480c52385f0de22e4dc1dd14a5d58995d540f8f6d566627ed.png)\n\n## Specifications\n\nModel name: VG-FBB3BA\n\nDimensions (W x H x D): 99.0 x 91.35 x 99.6 mm / Weight: 900 ± 20 g\n\n## [Español]\n\nContenidos del paquete: Batería, Cable USB, Manual del usuario / Tarjeta de la garantía\n\n- 1Soporte de receptáculo\n- 2Puerto USB (de tipo C, 50 W de SALIDA)\n- y Permite conectar el cuerpo principal de The Freestyle a la batería.\n- y Permite cargar dispositivos externos a una gran velocidad.\n- 3Puerto USB (de tipo C, DE ENTRADA y 10 W de SALIDA)\n- y Permite cargar la batería de The Freestyle. Permite cargar dispositivos externos.\n- 4Botón de verificación del nivel de batería\n- y Para verificar el nivel de batería del producto, observe el indicador LED. Si parpadea un indicador LED, cargue la batería.\n- 5Indicador LED\n- Precauciones para utilizar el producto\n\n- Esta es una batería exclusiva para The Freestyle. No la utilice para otros fines. Utilice una batería auténtica.\n\n- Tenga cuidado y asegúrese de que los niños no jueguen con la batería ni la desarmen. - No caliente la batería ni la acerque al fuego.\n\n![Image](image_000006_d51c314595d3600c12004375c7e5e6f84e4a488ee1f3bbae1fd00a4d5f1186dc.png)\n\n![Image](image_000007_c5fe99a54c7f8cb5ca2e4105cf8f874a55a96cd3d62bb70e70bac46e772e90f9.png)\n\n![Image](image_000008_5837efb483a699b91fb70382a42a1b56f129524f04c7d8369d52169525c077aa.png)\n\n- Tenga cuidado y asegúrese de que ningún material conductor extraño (p. ej., líquidos, polvo, mina de lápiz o polvo de metal) ingrese en el puerto de entrada o de salida. El puerto podría oxidarse o entrar temporalmente en cortocircuito, lo que puede provocar una explosión o un incendio. - Si el producto se guardará o se utilizará dentro de un vehículo cuando hace calor, tenga cuidado y asegúrese de que la batería no explote ni tenga filtraciones, ya que esto puede causar un incendio. - La temperatura de funcionamiento adecuada de este producto es de 32 °F a 95 °F (de 0 °C a 35 °C), y la temperatura de almacenamiento correspondiente es de -4 °F a 122 °F (de -20 °C a 50 °C). Si guarda o utiliza la batería a una temperatura superior o inferior a la indicada, puede que esta se dañe o que su vida útil disminuya.\n\n- Cuando mueva el producto, asegúrese de mantener unida la batería y el cuerpo principal de The Freestyle. Si no lo hace, la batería podría caerse y provocar lesiones, daños a la batería, explosiones o incendios.\n\n- Si el producto se apaga porque se descargó la batería, use el cable USB para cargarla y luego pulse el botón de la batería para volver a encender el producto.\n\n## Carga de la batería\n\n- y Cargue la batería con el adaptador (EP-TA865) que viene con el cuerpo principal de The Freestyle.\n- y Si conecta la batería con el cable USB a una computadora o a otro dispositivo para cargarla, la velocidad de carga puede disminuir debido a la escasa intensidad de la corriente.\n- y Puede utilizar el producto mientras se está cargando, pero la batería tardará más en cargarse.\n- y La temperatura del producto y del cargador puede aumentar durante el proceso de carga. Esto es normal y no afecta la vida útil ni la funcionalidad del producto. Si la temperatura de la batería aumenta hasta superar un determinado nivel, la carga se detendrá automáticamente para garantizar la seguridad.\n\n## Carga\n\nSi utilizará el producto por primera vez después de la compra o si no lo ha usado durante un periodo prolongado, cargue completamente la batería antes del uso.\n\n1. Utilice el cable USB para conectar el producto al adaptador.\n2. Luego de que se complete la carga, desconecte el cable USB del producto.\n3. y Una vez que se complete la carga, se encenderán los cuatro indicadores LED.\n\n## Conexión del producto a la batería\n\n1. Alinee el cuerpo principal de The Freestyle con las ranuras de la batería y presione el soporte para combinar el cuerpo principal y la batería.\n\n[ No presione la parte superior del cuerpo principal de The Freestyle.\n\n2. Utilice el cable USB para conectar el cuerpo principal de The Freestyle a la batería.\n\n## Desconexión del producto y la batería\n\nPrimero, retire el cable USB conectado.\n\nUtilice los dedos para extender levemente la goma de la batería y levante el cuerpo principal de The Freestyle.\n\n## Especificaciones\n\nNombre del modelo: VG-FBB3BA\n\nDimensiones (An x Al x Pr): 99.0 x 91.35 x 99.6 mm / Peso: 900 ± 20 g\n\n## [Français]\n\nContenu de l'emballage : Batterie, Câble USB, Guide d'utilisation/Carte de garantie\n\n- 1 Support\n- 2Port USB (type C, SORTIE 50 W)\n- y Raccorde le corps principal du modèle Le Freestyle à la batterie.\n- y Charge rapidement un appareil externe.\n- 3Port USB (type C, ENTRÉE &amp; SORTIE 10 W)\n- y Charge la batterie du modèle Le Freestyle. Charge un appareil externe.\n- 4Bouton de vérification du niveau de charge de la batterie\n- y Examinez le voyant DEL pour vérifier le niveau de charge de la batterie. S'il clignote, chargez la batterie.\n\n5Voyant DEL\n\n## Précautions d'utilisation du produit\n\n- Cette batterie est destinée au modèle Le Freestyle. Ne l'utilisez pas à d'autres fins. Utilisez la batterie d'origine.\n\n- Veillez à ne pas laisser des enfants jouer avec la batterie ou la démonter.\n\n- Ne placez pas la batterie à proximité d'une source de chaleur ou d'une flamme nue. - Assurez-vous qu'aucun matériau étranger conducteur (par exemple, liquide, poussière, pièce métallique, mine de crayon) ne pénètre dans le port d'entrée ou de sortie. Le port en question pourrait alors rouiller ou être provisoirement court-circuité, ce qui risquerait de provoquer une explosion ou un incendie.\n\n- Si le produit est destiné à être stocké ou utilisé dans un véhicule par temps chaud, assurez-vous que la batterie n'explose pas et que les produits chimiques qu'elle contient ne fuient pas, ce qui risquerait de provoquer un incendie.\n\n- Il est recommandé de maintenir ce produit à une température de fonctionnement comprise\n\nentre 32 ℉ et 95 ℉ (entre 0 ℃ et 35 ℃) et à une température d'entreposage comprise entre -4 ℉ et 122 ℉ (entre -20 ℃ et 50 ℃). L'entreposage ou l'utilisation de la batterie à des températures supérieures ou inférieures aux valeurs recommandées risque de l'endommager ou de réduire sa durée de vie.\n\n- Veillez à maintenir ensemble la batterie et le corps principal du modèle Le Freestyle lorsque vous déplacez le produit. Autrement, la batterie risquerait de tomber et donc d'être endommagée, ou encore de provoquer des blessures, une explosion ou un incendie. - Si le produit est éteint parce que sa batterie est déchargée, utilisez le câble USB pour charger la batterie, puis appuyez sur le bouton de la batterie pour allumer le produit.\n\n## Recharge de la pile\n\n- y Chargez la batterie avec l'adaptateur (EP-TA865) fourni avec le corps principal du modèle Le Freestyle.\n- y Lorsque vous chargez la batterie en la branchant sur un ordinateur ou un autre appareil à l'aide d'un câble USB, la vitesse de charge peut diminuer en raison de la faible intensité du courant.\n- y Vous pouvez continuer à utiliser le produit lorsqu'il est en cours de charge, mais la durée de charge risque d'être plus longue.\n- y La température du produit et du chargeur peut augmenter en cours de charge. Ce phénomène est normal et n'a aucune incidence sur la durée de vie et le fonctionnement du produit. Si la température de la batterie dépasse un certain seuil, la charge peut être automatiquement interrompue par mesure de sécurité.\n\n## Charge\n\nChargez complètement la batterie lorsque vous l'utilisez pour la toute première fois après l'avoir achetée ou que vous ne l'avez pas utilisée pendant un certain temps.\n\n1. Utilisez le câble USB pour raccorder le produit à l'adaptateur.\n\n2. Une fois la charge terminée, débranchez le câble USB du produit.\n\n- y Les quatre voyants DEL s'allument une fois la batterie chargée.\n\n## Raccordement du produit à la batterie\n\n1. Alignez le corps principal du modèle Le Freestyle avec les rainures de la batterie, puis appuyez sur le support pour raccorder le corps principal et la batterie.\n2. [ N'appuyez pas sur la partie supérieure du corps principal du modèle Le Freestyle.\n2. Utilisez le câble USB pour raccorder le corps principal du modèle Le Freestyle à la batterie.\n\n## Retrait du produit de la batterie\n\nCommencez par débrancher le câble USB.\n\nÀ l'aide de vos doigts, écartez légèrement la partie en caoutchouc de la batterie et soulevez le corps principal du modèle Le Freestyle.\n\n## Spécifications\n\nNom du modèle: VG-FBB3BA\n\nDimensions (L x H x P) : 99.0 x 91.35 x 99.6 mm / Poids: 900 ± 20 g\n\n![Image](image_000009_d888eff1e2f726fa2bac5de692bb8b5fa109bedd088353c243aa9961d26ccf30.png)\n\n![Image](image_000010_6c3e16973b2a8b5cf46a9afc8fe767c36307ccdb00cb9b682b4ba3ad2d0b421d.png)\n\n## [Português]\n\nConteúdo da embalagem: Bateria, Cabo USB, Manual do usuário/Cartão de garantia\n\n- 1Suporte para cabos\n- 2Porta USB (tipo C, SAÍDA de 50 W)\n- y Conecta a estrutura principal do The Freestyle à bateria.\n- y Carrega um dispositivo externo em alta velocidade.\n- 3Porta USB (tipo C, ENTRADA &amp; SAÍDA de 10 W)\n- y Carrega a bateria do The Freestyle. Carrega um dispositivo externo.\n- 4Botão de verificação do nível de bateria\n- y Verifique o nível da bateria do produto visualizando o indicador de LED. Se um indicador de LED piscar, carregue a bateria.\n- 5Indicador de LED\n\n## Precauções relativas à utilização do produto\n\n- Essa é uma bateria específica para o The Freestyle. Não a utilize para outros fins. Utilize uma bateria original.\n\n- Tenha cuidado e certifique-se de que crianças não desmontem a bateria ou brinquem com ela. - Não aqueça a bateria ou coloque-a no fogo.\n\n- Tenha cuidado e certifique-se de que nenhum material condutor estranho ao produto (por exemplo, líquido, poeira, metal ou ponta de lápis) entre em sua porta de entrada ou saída. É possível que a porta de entrada enferruje ou fique temporariamente sem passagem de corrente elétrica devido a um curto-circuito, o que pode causar explosão ou incêndio. - Se o produto for armazenado ou utilizado no interior de um veículo e o clima estiver quente, tenha cuidado e certifique-se de que a bateria não exploda ou vaze, o que pode resultar em incêndio. - A temperatura ideal de operação desse produto é de 32 ℉ a 95 ℉ (0 ℃ a 35 ℃) e sua temperatura ideal de armazenamento é de -4 ℉ a 122 ℉ (-20 ℃ a 50 ℃). O armazenamento ou uso da bateria a uma temperatura maior ou menor do que a ideal pode causar danos à bateria\n\nou queda de sua vida útil.\n\n- Ao transportar o produto, certifique-se de segurar a bateria e a estrutura principal do The Freestyle juntas. É possível que a bateria sofra quedas, o que pode causar ferimentos, danos à bateria, explosão ou incêndio.\n\n- Se o produto estiver desligado devido à bateria descarregada, utilize o cabo USB para carregála. Em seguida, pressione o botão na bateria para ligar o produto.\n\n## Carregamento da bateria\n\n- y Carregue a bateria utilizando o adaptador (EP-TA865) que vem com a estrutura principal do The Freestyle.\n- y Se a bateria for carregada conectada a um computador ou outro dispositivo através do uso do cabo USB, a velocidade de carregamento pode diminuir devido à baixa tensão da corrente.\n- y É possível utilizar o produto mesmo durante o carregamento, no entanto o tempo para carregar a bateria pode ser mais longo.\n- y A temperatura do produto e do carregador pode aumentar durante o carregamento. Isso é normal e não afeta a vida útil ou a funcionalidade do produto. Se a temperatura da bateria ultrapassar um limite, o carregamento poderá ser cancelado automaticamente para garantir seu uso seguro.\n\n## Carregamento\n\nCarregue totalmente a bateria antes da utilização do produto caso seja a primeira vez a usá-lo após a compra ou caso ele não tenha sido utilizado por um longo período.\n\n1. Utilize o cabo USB para conectar o produto ao adaptador.\n\n2. Quando o carregamento estiver concluído, remova o cabo USB do produto.\n\n- y Quando o carregamento é concluído, todos os quatro indicadores de LED se acendem.\n\n## Fixação do produto à bateria\n\n1. Alinhe a estrutura principal do The Freestyle em relação às ranhuras na bateria, e pressione o suporte para unir ambas as partes.\n2. [ Não faça pressão excessiva sobre a parte superior da estrutura principal do The Freestyle.\n2. Utilize o cabo USB para conectar a estrutura principal do The Freestyle à bateria.\n\n## Desencaixe do produto e da bateria\n\nRemova primeiro o cabo USB conectado.\n\nUse os seus dedos para afundar levemente a borracha na bateria e levantar a estrutura principal do The Freestyle.\n\n## Especificações\n\nNome do modelo: VG-FBB3BA\n\nDimensões (L x A x P): 99.0 x 91.35 x 99.6 mm / Peso: 900 ± 20 g\n\n## [한국어]\n\n구성품: 배터리, USB 케이블, 사용 설명서 / 제품 보증서\n\n- 1크레들 홀더\n- 2USB 단자(C Type, 50 W OUT)\n- y The Freestyle 본체와 배터리를 연결할 때 사용합니다.\n- y 외부 기기를 고속 충전할 수 있습니다.\n- 3USB 단자(C Type, IN &amp; 10 W OUT)\n- y The Freestyle 배터리를 충전할 수 있습니다. 외부 기기를 충전할 수 있습니다.\n- 4배터리 잔량 확인 버튼\n- y LED 표시등을 통해 제품의 배터리 잔량을 확인할 수 있습니다. LED 표시등 1개가 깜빡일 경우, 배터리를 충전하세요.\n\n- 5LED 표시등\n\n## 제품 사용 시 주의사항\n\n- 이 제품은 The Freestyle 전용 배터리입니다. 다른 용도로 사용하지 마세요. 배터리는 정품을 사용하세요. - 배터리를 아이들이 가지고 놀거나 분해하지 않도록 주의하세요.\n\n- 배터리를 가열하거나 불속에 넣지 마세요.\n\n- 출력 및 입력단자에 전도성 이물질(액체, 먼지, 금속 가루, 연필심 등)이 들어가지 않도록 주의하세요. 단자의 부식이나 일시적인 단락(합선)으로 인해 폭발, 화재가 발생할 수 있습니다.\n\n- 더운 날씨에 차량 보관 및 사용 시에는 폭발, 누액 등 화재에 주의하세요.\n\n- 이 제품의 적정 사용온도는 0 ℃ ~ 35 ℃ (32 ℉ ~ 95 ℉)이며, 적정 보관 온도는 -20 ℃ ~ 50 ℃ (-4 ℉ ~ 122 ℉) 입니다. 적정 온도보다 높거나 낮은 온도에서는 배터리가 손상되거나 수명이 단축될 수 있습니다.\n\n- 제품 이동 시에는 배터리와 The Freestyle 본체를 함께 잡고 이동해 주세요. 배터리가 떨어지면 다치거나, 충격으로 파손되거나 폭발 또는 화재가 발생할 수 있습니다.\n\n- 사용 중 배터리 방전으로 제품이 꺼진 경우 USB 케이블로 배터리를 충전한 다음, 배터리의 버튼을 누르면 제품이 켜집니다.\n\n## 배터리 충전 방법\n\n- y The Freestyle 본체 구입시 동봉된 아답터(EP-TA865)를 이용하여 충전하세요.\n- y USB 케이블로 컴퓨터 등과 연결하여 충전할 때는 낮은 전류로 인해 충전 속도가 느려질 수 있습니다.\n- y 충전 중에도 제품을 사용할 수 있으나, 배터리 충전 시간이 길어질 수 있습니다.\n- y 충전 중에는 제품과 충전기가 뜨거워질 수 있습니다. 이는 정상적인 현상으로, 제품의 수명이나 기능에는 영향을 미치지 않습니다. 배터리의 온도가 일정 수준 이상 높아지면 안전을 위해 충전이 중지될 수 있습니다.\n\n## 충전하기\n\n제품을 구입한 후 처음 사용하거나 장시간 미사용한 경우에는 배터리를 충분히 충전하여 사용하세요. 1. USB 케이블을 이용하여 제품과 아답터를 연결하세요.\n\n2. 충전이 끝나면 제품과 USB 케이블을 분리하세요.\n\n- y 충전이 완료되면 4개의 LED 표시등이 모두 켜집니다.\n\n## 제품 연결 방법\n\n1. The Freestyle 본체를 홈에 맞춰 배터리 위에 올리고 스탠드를 눌러 결합해 주세요. [ The Freestyle 본체의 상단을 누르지 마세요.\n\n2. The Freestyle 본체와 배터리를 USB 케이블로 연결하세요.\n\n## 제품 분리 방법\n\n연결된 USB 케이블을 먼저 분리하세요.\n\n배터리의 러버를 손가락으로 살짝 벌려서 The Freestyle 본체를 들어 올려주세요.\n\n## 제품 규격\n\n모델명: VG-FBB3BA\n\n크기(가로 x 높이 x 깊이): 99.0 x 91.35 x 99.6 mm / 무게: 900 ± 20 g\n\n![Image](image_000011_c5fe99a54c7f8cb5ca2e4105cf8f874a55a96cd3d62bb70e70bac46e772e90f9.png)\n\n![Image](image_000012_5837efb483a699b91fb70382a42a1b56f129524f04c7d8369d52169525c077aa.png)\n\nRegulatory Compliance Statements\n\nFCC Supplier's Declaration of Conformity\n\nResponsible Party - U.S. Contact Information:\n\nSamsung Electronics America, Inc.\n\n85 Challenger Road.\n\nRidgefield Park, NJ 07660\n\nPhone: 1-800-SAMSUNG (726-7864)\n\nFCC Compliance Statement:\n\nThis device complies with Part 15 of the FCC Rules.\n\nOperation is subject to the following two conditions:\n\n(1) This device may not cause harmful interference, and\n\n(2) \u0007this device must accept any interference received, including interference that may cause undesired operation.\n\n## FCC Caution:\n\nAny changes or modifications not expressly approved by the party responsible for compliance could void the user's authority to operate this equipment.\n\n## Class B FCC Statement\n\nThis equipment has been tested and found to comply with the limits for a Class B digital device, pursuant to Part 15 of the FCC Rules. These limits are designed to provide reasonable protection against harmful interference in a residential installation. This equipment generates, uses and can radiate radio frequency energy and, if not installed and used in accordance with the instructions, may cause harmful interference to radio communications. However, there is no guarantee that interference will not occur in a particular installation. If this equipment does cause harmful interference to radio or television reception, which can be determined by turning the equipment off and on, the user is encouraged to try to correct the interference by one of the following measures:\n\n- y Reorient or relocate the receiving antenna.\n- y Increase the separation between the equipment and receiver.\n- y Connect the equipment into an outlet on a circuit different from that to which the receiver is connected.\n- y Consult the dealer or an experienced radio/TV technician for help.\n\n## CALIFORNIA USA ONLY\n\nThis Perchlorate warning applies only to primary CR(Manganese Dioxide) Lithium coin cells in the product sold or distributed ONLY in California USA \"Perchlorate Material - special handling may apply, See www.dtsc.ca.gov/hazardouswaste/perchlorate.\"\n\nDispose unwanted electronics through an approved recycler. To find the nearest recycling location, go to our website: www.samsung.com/recycling Or call, 1-800-SAMSUNG For battery recycling go to call2recycle.org or call 1-800-822-8837\n\n![Image](image_000013_c4a0e9d7a7a4074a04bc227aec2475d82ebec873bb8405126fd75422a76ddea5.png)\n\nWARNING: Cancer and Reproductive Harm - www.P65Warnings.ca.gov.\n\n![Image](image_000014_51644eddeb44c4b04fed52367f80d2a4db0a794aa6b41bc71c7fb2d92042b36c.png)\n\n## Canadian Caution\n\nThis equipment contains licence-exempt transmitter(s)/receiver(s) that comply with Innovation, Science and Economic Development Canada's licence-exempt RSS(s). Operation is subject to the following two conditions:\n\n1. This device may not cause interference.\n2. This device must accept any interference, including interference that may cause undesired operation of the device.\n\nThis equipment and its antenna(s) must not be co-located or operation in conjunction with any other antenna or transmitter.\n\nL'émetteur/récepteur exempt de licence contenu dans le présent appareil est conforme aux CNR d'Innovation, Sciences et Développement économique Canada applicables aux appareils radio exempts de licence. L'exploitation est autorisée aux deux conditions suivantes :\n\n1. L'appareil ne doit pas produire de brouillage;\n2. L'appareil doit accepter tout brouillage radioélectrique subi, même si le brouillage est susceptible d'en compromettre le fonctionnement.\n\nCet appareil et ses antennes ne doivent pas être installés ou utilisés conjointement avec d'autres antennes ou émetteurs.\n\nThe equipment could automatically discontinue transmission in case of absence of information to transmit, or operational failure. Note that this is not intended to prohibit transmission of control or signaling information or the use of repetitive codes where required by the technology.\n\n## ICES-003 Class B Notice - Avis NMB-003, Classe B\n\nThis Class B digital apparatus complies with Canadian ICES-003.\n\nCet appareil numerique de la classe B est conforme a la norme NMB-003 du Canada.\n\nPilhas e baterias, após seu uso, não devem ser jogadas em lixo comum. Para evitar riscos à saúde humana e ao meio ambiente, realize o descarte ambientalmente adequado, em um Serviço Autorizado Samsung.\n\n![Image](image_000015_d888eff1e2f726fa2bac5de692bb8b5fa109bedd088353c243aa9961d26ccf30.png)",
+            "json_content": null,
+            "html_content": null,
+            "text_content": null,
+            "doctags_content": null,
+            "doclang_content": null
+          },
+          "status": "success",
+          "errors": [],
+          "processing_time": 10.432856033999997,
+          "timings": {},
+          "confidence": {
+            "parse_score": 1,
+            "layout_score": 0.8220447302371984,
+            "table_score": null,
+            "ocr_score": 0.8998127777777778,
+            "mean_score": 0.907285836004992,
+            "low_score": 0.8298215349912563,
+            "mean_grade": "excellent",
+            "low_grade": "good"
+          }
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Local File Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Execute Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Ollama": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Store1": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Ollama1": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        []
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "fb35dde1-d05a-4f9f-b4dd-dbdd28bdafc8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "558d88703fb65b2d0e44613bc35916258b0f0bf983c5d4730c00c424b77ca36a"
+  },
+  "nodeGroups": [],
+  "id": "GIWSqS3ry56eScpl",
+  "tags": []
+}
